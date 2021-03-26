@@ -1,13 +1,19 @@
+import time
 import cv2
 print(cv2.__version__)
 import numpy as np
 from adafruit_servokit import ServoKit
 
-#frame1 containes [pan,tilt,roi[x,y,w,h]] 
-global frame1 
-frame1 = np.zeros(2)
-print(frame1)
+global pan 
+global tilt
+goFlag = 0
 
+frame_idx_counter = 0
+
+x1 = 0 
+x2 = 0
+y1 = 0
+y2 = 0
 
 #display width and height
 dispW=640
@@ -27,13 +33,14 @@ def mouse_click(event,x,y,flags,params):
         goFlag = 0
     if event == cv2.EVENT_LBUTTONUP:
         x2 = x
+        y2 = y
         goFlag = 1
 
 
 #define servo channels
 kit=ServoKit(channels=16) 
+tilt = 90
 pan=90
-tilt=90
 kit.servo[0].angle=pan
 kit.servo[1].angle=tilt
  
@@ -73,8 +80,82 @@ print('width:',width,'height:',height)
 
 
 
-print(frame1)
+class FrameView:
+    
+    def __init__(self):
+        self.f_pan = 90
+        self.f_tilt = 90
+        self.roi = np.zeros(4)
+
+    def get_roi(self):
+        self.roi[0] = x1
+        self.roi[1] = x2
+        self.roi[2] = y1
+        self.roi[3] = y2
+
+    def init_frame(self):
+        global pan
+        global tilt
+        global frame_idx_counter
+        while True:
+            ret, frame = cam.read()
+            cv2.imshow('nanoCam',frame)
+            cv2.moveWindow('nanoCam',0,0)
+            cv2.setMouseCallback('nanoCam', mouse_click)
+            if goFlag == 1:
+                frame=cv2.rectangle(frame,(x1,y1),(x2,y2),(255,0,0),3)
+                region_of_interest = cv2.rectangle(frame,(x1,y1),(x2,y2),(255,0,0), 3)        
+                cv2.imshow('nanoCam', region_of_interest)
+                cv2.moveWindow('nanoCam', 0 ,0)     
+            FrameView.get_roi(self)
+            
+            if frame_idx_counter == 0:
+                pan = cv2.getTrackbarPos('Pan','Trackbars')
+                tilt = cv2.getTrackbarPos('Tilt', 'Trackbars') 
+                kit.servo[0].angle=pan
+                kit.servo[1].angle=tilt
+                if cv2.waitKey(1)==ord('i'):   
+                    frame_idx_counter = frame_idx_counter + 1  
+                    self.f_pan = pan
+                    self.f_tilt = tilt
+                    pan = pan  - (60*frame_idx_counter)
+                    tilt = tilt
+                    break
+            
+            if frame_idx_counter > 0:
+                kit.servo[0].angle=pan 
+                kit.servo[1].angle=tilt
+                if cv2.waitKey(1)==ord('i'):   
+                    self.f_pan = pan 
+                    self.f_tilt = tilt
+                    break
+            
+            if cv2.waitKey(1)==ord('q'):
+                break
+    
+
+    
+
+frame1 = FrameView()
+frame1.init_frame()
+print(frame1.f_pan) 
+print(frame1.f_tilt)
+print(frame1.roi)
+
+
+frame2 = FrameView()
+frame2.init_frame()
+print(frame2.f_pan) 
+print(frame2.f_tilt)
+print(frame2.roi)
+
+pan=frame1.f_pan
+tilt=frame1.f_tilt
+kit.servo[0].angle=pan 
+kit.servo[1].angle=tilt
+
 while True:   
+
     ret, frame = cam.read()
     #frame=cv2.imread('smarties.png')
  
@@ -108,17 +189,6 @@ while True:
     cv2.getTrackbarPos('Pan','Trackbars')
     cv2.getTrackbarPos('Tilt', 'Trackbars')
 
-#initilize frame 1 
-    if cv2.waitKey(1)==ord('1'):
-        frame1[0]=cv2.getTrackbarPos('Pan','Trackbars')
-        frame1[1]=cv2.getTrackbarPos('Tilt', 'Trackbars') 
-        pan = frame1[0]
-        tilt = frame1[1] 
-        kit.servo[0].angle=pan
-        kit.servo[1].angle=tilt 
-        print(frame1)
-
-
     contours,_=cv2.findContours(FGmaskComp,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
     contours=sorted(contours,key=lambda x:cv2.contourArea(x),reverse=True)
     for cnt in contours:
@@ -137,16 +207,14 @@ while True:
             
             
             if abs(errorPan_right)>width/2-5:
-                pan=pan-errorPan_right*2/32
-                print("errorpan right : ", errorPan_right)
+                pan=frame2.f_pan
                 print("pan : " ,pan)
             if abs(errorPan_left)>width/2-5:
-                pan=pan-errorPan_left*2/32
-                print("errorpan left : ", errorPan_left)
+                pan=frame1.f_pan
                 print("pan : " ,pan)
 
-            if abs(errorTilt)>height/2-10:
-                tilt=tilt-errorTilt/75
+            # if abs(errorTilt)>height/2-10:
+            #     tilt=tilt-errorTilt/75
  
  
             if pan>180:
