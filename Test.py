@@ -1,6 +1,7 @@
 import cv2 
 print(cv2.__version__)
 dispW=640
+
 dispH=480
 #Uncomment These next Two Line for Pi Camera
 camSet='nvarguscamerasrc !  video/x-raw(memory:NVMM), width=3264, height=2464, format=NV12, framerate=21/1 ! nvvidconv  ! video/x-raw, width='+str(dispW)+', height='+str(dispH)+', format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink'
