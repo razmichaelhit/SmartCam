@@ -5,15 +5,20 @@ import cv2
 import imutils
 
 
-prototext = "deploy_lowers.prototxt"
-model = "res10_300x300_ssd_iter_140000_fp16.caffemodel"
+prototext = "~/Desktop/test_face/mtcnn_facenet_cpp_tensorRT/mtCNNModels/det1_relu.prototxt"
+model = "~/Desktop/test_face/mtcnn_facenet_cpp_tensorRT/mtCNNModels/det1_relu.caffemodel"
+
+# prototext = "deploy_lowers.prototxt"
+# model = "res10_300x300_ssd_iter_140000_fp16.caffemodel"
 
 # load our serialized model from disk
 print("[INFO] loading model...")
 net = cv2.dnn.readNetFromCaffe(prototext, model)
+net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+
+
 # initialize the video stream and allow the camera sensor to warm up
-
-
 
 DISPLAY_WIDTH = 640
 DISPLAY_HEIGHT = 480
