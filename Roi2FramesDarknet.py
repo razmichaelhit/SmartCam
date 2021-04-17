@@ -6,7 +6,7 @@ import numpy as np
 import os
 import face_recognition
 from adafruit_servokit import ServoKit
-
+import datetime
 
 #display width and height
 DISPLAY_WIDTH = 640
@@ -165,6 +165,7 @@ def personDetector(frame_right):
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
     while True:
         ret, frame = cam.read()
+        frame_clean = frame
         #Showing the frame by the frame indx
         frame_right[frame_idx].showFrame(frame)
         
@@ -190,7 +191,7 @@ def personDetector(frame_right):
                 
                 #Check if the object overlap in the frame roi
                 if isInRoi(box, frame_right, frame_idx) == 1 and i < 30:
-                    cv2.imwrite('/home/rami/Desktop/Project/Pictures/unknown/'+str(i)+'_unknown.png',frame)
+                    cv2.imwrite('/home/rami/Desktop/Project/Pictures/unknown/'+str(i)+'_unknown.png',frame_clean)
                     i = i + 1
                 if i == 15:
                     score = isSuspect()
@@ -201,11 +202,14 @@ def personDetector(frame_right):
                     backup = "/home/rami/Desktop/Project/Pictures/backup"
                     unknown_image_dir='/home/rami/Desktop/Project/Pictures/unknown'
                     shutil.move(unknown_image_dir, backup)
-                    os.rename('/home/rami/Desktop/Project/Pictures/backup/unknown' , '/home/rami/Desktop/Project/Pictures/backup/'+str(time.time())+'')
+                    os.rename('/home/rami/Desktop/Project/Pictures/backup/unknown' , '/home/rami/Desktop/Project/Pictures/backup/'+str(datetime.datetime.now())+'')
                     os.mkdir(unknown_image_dir)
-                if i==999:
+                    i = i + 1
+                if i<200 and i > 30:
+                    i = i + 1
+                if i == 200:
                     i = 0
-                    
+                print(i)
                 #Checking what direction subject goes
                 if endX>DISPLAY_WIDTH-10:
                     frame_idx = frame_idx + 1
