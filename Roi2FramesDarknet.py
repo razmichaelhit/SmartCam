@@ -7,6 +7,8 @@ import os
 import face_recognition
 from adafruit_servokit import ServoKit
 import datetime
+from threading import Thread, enumerate
+import queue
 
 #display width and height
 DISPLAY_WIDTH = 640
@@ -142,7 +144,7 @@ class FrameView:
 
 #face detection Deep Nueral Network for first tracking object
 def personDetector(frame_right):
-    
+
     CONFIDENCE_THRESHOLD = 0.2
     NMS_THRESHOLD = 0.4
     COLORS = [(0, 255, 255), (255, 255, 0), (0, 255, 0), (255, 0, 0)]
@@ -156,11 +158,11 @@ def personDetector(frame_right):
 
     #open class txt file (Person)
     class_names = []
-    with open("classes.txt", "r") as f:
+    with open("./cfg/classes.txt", "r") as f:
         class_names = [cname.strip() for cname in f.readlines()]
 
     #configuring yolo model
-    net = cv2.dnn.readNet("Tinyyolov4_personDetection.weights", "Tinyyolov4_personDetection.cfg")
+    net = cv2.dnn.readNet("Tinyyolov4_personDetection.weights", "./cfg/Tinyyolov4_personDetection.cfg")
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
     while True:
@@ -195,9 +197,8 @@ def personDetector(frame_right):
                     i = i + 1
                 if i == 15:
                     score = isSuspect()
-                    print("The score is : " , score)
-                    # if score<0.2:
-                    #     sendMail()  
+                    print(score)
+                    #     sendMail(Message)  
                 if i == 30:
                     backup = "/home/rami/Desktop/Project/Pictures/backup"
                     unknown_image_dir='/home/rami/Desktop/Project/Pictures/unknown'
@@ -205,9 +206,9 @@ def personDetector(frame_right):
                     os.rename('/home/rami/Desktop/Project/Pictures/backup/unknown' , '/home/rami/Desktop/Project/Pictures/backup/'+str(datetime.datetime.now())+'')
                     os.mkdir(unknown_image_dir)
                     i = i + 1
-                if i<200 and i > 30:
+                if i<500 and i > 30:
                     i = i + 1
-                if i == 200:
+                if i == 500:
                     i = 0
                 print(i)
                 #Checking what direction subject goes
