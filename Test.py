@@ -5,7 +5,7 @@ dispW=1920
 dispH=1080
 #Uncomment These next Two Line for Pi Camera
 camSet='nvarguscamerasrc !  video/x-raw(memory:NVMM), width=3264, height=2464, format=NV12, framerate=21/1 ! nvvidconv  ! video/x-raw, width='+str(dispW)+', height='+str(dispH)+', format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink'
-name= 'Carly'
+name= 'Raz'
 #camSet='nvarguscamerasrc sensor-id=-0 ! video/x-raw(memory:NVMM), width=3264, height=2464, framerate=21/1, format=NV12 ! nvvidconv flip-method=2 ! video/x-raw, width=800, height=600, format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink'
 cam= cv2.VideoCapture(camSet)
 #Or, if you have a WEB cam, uncomment the next line

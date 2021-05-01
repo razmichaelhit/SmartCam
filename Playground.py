@@ -3,19 +3,26 @@ import imutils
 import shutil
 import time
 import numpy as np
-import os
+import os, sys
+from PIL import Image
 import face_recognition
 from adafruit_servokit import ServoKit
 import datetime
 import threading
 import concurrent.futures
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.multipart import MIMEMultipart
 
 #display width and height
+WIDTH = 640
+EIGHT = 480
 DISPLAY_WIDTH = 640
 DISPLAY_HEIGHT = 480
 FOV = 40 # Servo FOV to change frame
 #camera settings
-camSet='nvarguscamerasrc !  video/x-raw(memory:NVMM), width=3264, height=2464, format=NV12, framerate=21/1 ! nvvidconv  ! video/x-raw, width='+str(DISPLAY_WIDTH)+', height='+str(DISPLAY_HEIGHT)+', format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink'
+camSet='nvarguscamerasrc !  video/x-raw(memory:NVMM), width=4032, height=3040, format=NV12, framerate=21/1 ! nvvidconv  ! video/x-raw, width='+str(WIDTH)+', height='+str(EIGHT)+', format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink'
 cam= cv2.VideoCapture(camSet)
 
 #Parameters to mouse click event
@@ -86,6 +93,7 @@ class FrameView:
 #Set the roi from the user
     def setRoi(self):
         ret, frame = cam.read()
+        # frame = cv2.resize(frame,(640 , 480))
         cv2.imshow('nanoCam',frame)
         cv2.moveWindow('nanoCam',0,0)
         cv2.setMouseCallback('nanoCam', mouse_click)
@@ -113,27 +121,35 @@ class FrameView:
         while True:
             self.frame_pan = cv2.getTrackbarPos('Pan','Trackbars')
             self.frame_tilt = cv2.getTrackbarPos('Tilt', 'Trackbars')
-            imxCamera.changePosition(self.frame_pan, self.frame_tilt)
+            if (imxCamera.changePosition(self.frame_pan, self.frame_tilt)) == 1:
+                print("Failed to initialize frame:")
+                print("Frame cannot be over 180 degrees or less than 0")
+                return False
             FrameView.setRoi(self)
             if cv2.waitKey(1)==ord('1'):
                 FrameView.getRoi(self)
-                break
+                return True
             if cv2.waitKey(1)==ord('q'):
-                break
+                return False
+                
 
 #init any other frame with frame_frame_idx
     def initRightFrame(self, frame_frame_idx, pan, tilt):
         self.frame_tilt = tilt
         self.frame_pan = pan
         self.frame_pan = self.frame_pan - FOV*(int(frame_frame_idx)-1)
-        imxCamera.changePosition(self.frame_pan, self.frame_tilt)
+        if (imxCamera.changePosition(self.frame_pan, self.frame_tilt)) == 1:
+                print("Failed to initialize frame:")
+                print("Frame cannot be over 180 degrees or less than 0")
+                return False
         while True:
             FrameView.setRoi(self)
             if cv2.waitKey(1)==ord(frame_frame_idx):
                 FrameView.getRoi(self)
-                break
+                return True
             if cv2.waitKey(1)==ord('q'):
-               break
+                return False
+
 
 
 #show the frame includes the roi
@@ -142,7 +158,7 @@ class FrameView:
         FrameView.showRoi(self, frame)
 
 
-def personDetector(frame, frame_idx, FRAME_CHANGED_FLAG, class_names, net, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, COLORS):
+def personDetector(frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, class_names, net, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, COLORS):
     model = cv2.dnn_DetectionModel(net)
     model.setInputParams(size=(416, 416), scale=1/255, swapRB=True)
     classes, scores, boxes = model.detect(frame, CONFIDENCE_THRESHOLD, NMS_THRESHOLD)
@@ -160,11 +176,18 @@ def personDetector(frame, frame_idx, FRAME_CHANGED_FLAG, class_names, net, CONFI
             FRAME_CHANGED_FLAG = FRAME_CHANGED_FLAG+1
             if FRAME_CHANGED_FLAG > 10:
                 FRAME_CHANGED_FLAG = 0
-            return frame, frame_idx, FRAME_CHANGED_FLAG, boundingBox
+            return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
 
         #Checking what direction subject goes
         frame_idx, FRAME_CHANGED_FLAG = checkDirection(startX,endX,frame_idx,FRAME_CHANGED_FLAG)
-    return frame, frame_idx, FRAME_CHANGED_FLAG, boundingBox
+        return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
+    #IF NO PERSON IN THE PIC FOR MORE THAN 10 FRAMES BACK TO BEGINNING
+    NO_PERSON_FLAG = NO_PERSON_FLAG + 1
+    if NO_PERSON_FLAG > 0:
+        if NO_PERSON_FLAG > 10:
+            frame_idx = 0
+            NO_PERSON_FLAG = 0    
+    return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
 
 
 def checkDirection(startX, endX, frame_idx, FRAME_CHANGED_FLAG):
@@ -181,24 +204,40 @@ def checkDirection(startX, endX, frame_idx, FRAME_CHANGED_FLAG):
 
 def isInRoi(boundingBox, frame_right, frame_idx):
     (startX, startY, w, h) = boundingBox.astype("int")
-    l1 = Point(frame_right[frame_idx].roi[0],frame_right[frame_idx].roi[2])
-    r1 = Point(frame_right[frame_idx].roi[1],frame_right[frame_idx].roi[3])
-    l2 = Point(startX, startY)
-    r2 = Point(startX + w,  startY + h)
-    if(doOverlap(l1,r1,l2,r2)==True):
+    RoiBoxLeftUp = Point(frame_right[frame_idx].roi[0],frame_right[frame_idx].roi[2])
+    RoiBoxLeftDown = Point(frame_right[frame_idx].roi[0],frame_right[frame_idx].roi[3])
+    RoiBoxRightUp = Point(frame_right[frame_idx].roi[1],frame_right[frame_idx].roi[2])
+    RoiBoxRightDown = Point(frame_right[frame_idx].roi[1],frame_right[frame_idx].roi[3])
+    BoundingBoxLeftUp = Point(startX, startY)
+    BoundingBoxLeftDown = Point(startX, startY + h)
+    BoundingBoxRightUp = Point(startX + w, startY)
+    BoundingBoxRightDown = Point(startX + w, startY + h)
+    
+    if(doOverlap(BoundingBoxLeftUp, BoundingBoxLeftDown, BoundingBoxRightUp, BoundingBoxRightDown, 
+    RoiBoxLeftUp, RoiBoxLeftDown, RoiBoxRightUp, RoiBoxRightDown)==True):
         return True
     else:
         return False
 
-def doOverlap(l1, r1, l2, r2):   
-    # To check if either rectangle is actually a line
-    # print("l1:", l1.x, l1.y)
-    # print("r1:", r1.x, r1.y)
-    # print("l2:", l2.x, l2.y)
-    # print("r2:", r2.x, r2.y)
-    if (l1.x > l2.x and l1.x < r2.x) and (l1.y > l2.y and l1.y < r2.y):
+def doOverlap(BoundingBoxLeftUp, BoundingBoxLeftDown, BoundingBoxRightUp, BoundingBoxRightDown, 
+RoiBoxLeftUp, RoiBoxLeftDown, RoiBoxRightUp, RoiBoxRightDown):
+    #Check if one of the bounding box points in the roi rectangle
+    if (BoundingBoxLeftUp.x > RoiBoxLeftDown.x and BoundingBoxLeftUp.x < RoiBoxRightDown.x) and (BoundingBoxLeftUp.y > RoiBoxLeftUp.y and BoundingBoxLeftUp.y < RoiBoxLeftDown.y):
         return True
-    if (r1.x > l2.x and r1.x < r2.x) and (r1.y > l2.y and r1.y < r2.y):
+    if (BoundingBoxRightUp.x > RoiBoxLeftDown.x and BoundingBoxRightUp.x < RoiBoxRightDown.x) and (BoundingBoxRightUp.y > RoiBoxLeftUp.y and BoundingBoxRightUp.y < RoiBoxLeftDown.y):
+        return True
+    if (BoundingBoxRightDown.x > RoiBoxLeftDown.x and BoundingBoxRightDown.x < RoiBoxRightDown.x) and (BoundingBoxRightDown.y > RoiBoxLeftUp.y and BoundingBoxRightDown.y < RoiBoxLeftDown.y):
+        return True
+    if (BoundingBoxLeftDown.x > RoiBoxLeftDown.x and BoundingBoxLeftDown.x < RoiBoxRightDown.x) and (BoundingBoxLeftDown.y > RoiBoxLeftUp.y and BoundingBoxLeftDown.y < RoiBoxLeftDown.y):
+        return True
+    #Check if one of the roi box points in the bounding box rectangle
+    if (RoiBoxLeftUp.x > BoundingBoxLeftDown.x and RoiBoxLeftUp.x < BoundingBoxRightDown.x) and (RoiBoxLeftUp.y > BoundingBoxLeftUp.y and RoiBoxLeftUp.y < BoundingBoxLeftDown.y):
+        return True
+    if (RoiBoxRightUp.x > BoundingBoxLeftDown.x and RoiBoxRightUp.x < BoundingBoxRightDown.x) and (RoiBoxRightUp.y > BoundingBoxLeftUp.y and RoiBoxRightUp.y < BoundingBoxLeftDown.y):
+        return True
+    if (RoiBoxRightDown.x > BoundingBoxLeftDown.x and RoiBoxRightDown.x < BoundingBoxRightDown.x) and (RoiBoxRightDown.y > BoundingBoxLeftUp.y and RoiBoxRightDown.y < BoundingBoxLeftDown.y):
+        return True
+    if (RoiBoxLeftDown.x > BoundingBoxLeftDown.x and RoiBoxLeftDown.x < BoundingBoxRightDown.x) and (RoiBoxLeftDown.y > BoundingBoxLeftUp.y and RoiBoxLeftDown.y < BoundingBoxLeftDown.y):
         return True
     return False
 
@@ -211,15 +250,17 @@ def classifyAndBackup(known_image_dir, unknown_image_dir, backup, frame_right, S
     score = isSuspect(known_image_dir, unknown_image_dir)
     print(score)
     shutil.move(unknown_image_dir, backup)
-    os.rename('/home/rami/Desktop/Project/Pictures/backup/unknown' , '/home/rami/Desktop/Project/Pictures/backup/'+str(datetime.datetime.now())+'')
+    newBackupPath = '/home/rami/Desktop/Project/Pictures/backup/'+str(datetime.datetime.now())+''
+    os.rename('/home/rami/Desktop/Project/Pictures/backup/unknown' , newBackupPath)
     os.mkdir(unknown_image_dir)
-    IS_SUSPECT_FLAG = 0
+    pathToExamplePic = newBackupPath+'/5_unknown.png'
     if score > SuspectThreshhold:
         frame_idx = 0
-    f = open("./cfg/frame_idx.txt", "w")
-    f.write(str(frame_idx))
-    f.close()
-    return IS_SUSPECT_FLAG
+        shutil.rmtree(newBackupPath)
+    else:
+        SendMail(pathToExamplePic)
+    WriteFrameToFile(frame_idx)
+    return score
     
 
 def isSuspect(known_image_dir, unknown_image_dir):
@@ -287,7 +328,63 @@ def countOccurrences(arr, n, x):
         if x == arr[i]:
             res += 1
     return res
-  
+
+def SendMail(ImgFileName):
+    port = 587  # For starttls
+    smtp_server = "smtp.gmail.com"
+    img_data = open(ImgFileName, 'rb').read()
+    msg = MIMEMultipart()
+    msg['Subject'] = 'Suspect in the house: '
+    msg['From'] = 'razmichaelhit@gmail.com'
+    msg['To'] = 'razmichaelhit@gmail.com'
+    password = "Hit123456!"
+    username = "razmichaelhit@gmail.com"
+    sender_mail = username
+    reciever_mail = "razmichaelhit@gmail.com"
+
+    text = MIMEText("Suspect has been found in the garden")
+    msg.attach(text)
+    image = MIMEImage(img_data, name=os.path.basename(ImgFileName))
+    msg.attach(image)
+
+    server = smtplib.SMTP(smtp_server, port)
+    server.ehlo()
+    server.starttls()
+    server.ehlo()
+    server.login(username, password)
+    server.sendmail(sender_mail, reciever_mail, msg.as_string())
+    server.quit()
+
+def WriteFrameToFile(frame_idx):
+    f = open("./cfg/frame_idx.txt", "w")
+    f.write(str(frame_idx))
+    f.close()
+
+
+def ResizeAllPicturesInFOlder(path):
+    lst_imgs = [i for i in glob.glob(path+"/*.png")]
+    # It creates a folder called ltl if does't exist
+    if not "Resized" in os.listdir():
+        os.mkdir("Resized")  
+    print(lst_imgs)
+    for i in lst_imgs:
+        img = Image.open(i)
+        img = img.resize((500, 500), Image.ANTIALIAS)
+        img.save(i[:-4] +".png")
+    print("Done")
+
+def deleteAllFilesInFolder(path):
+    for filename in os.listdir(path):
+        file_path = os.path.join(path, filename)
+        try:
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+        except Exception as e:
+            print('Failed to delete %s. Reason: %s' % (file_path, e))
+
+
 def setDNNParams():
     #configuring yolo model
     net = cv2.dnn.readNet("./cfg/Tinyyolov4_personDetection.weights", "./cfg/Tinyyolov4_personDetection.cfg")
@@ -311,22 +408,28 @@ def main():
     
     #initialize frames
     frame_right.append(FrameView())
-    frame_right[0].initFrame1()
+    if (frame_right[0].initFrame1()) == False:
+        cam.release()
+        cv2.destroyAllWindows()
+        return False
     print(frame_right[0])
 
     frame_right.append(FrameView())
-    frame_right[1].initRightFrame('2', frame_right[0].frame_pan, frame_right[0].frame_tilt)
+    if (frame_right[1].initRightFrame('2', frame_right[0].frame_pan, frame_right[0].frame_tilt)) == False:
+        cam.release()
+        cv2.destroyAllWindows()
+        return False
     print(frame_right[1])
     
     frame_right.append(FrameView())
-    frame_right[2].initRightFrame('3', frame_right[0].frame_pan, frame_right[0].frame_tilt)
+    if (frame_right[2].initRightFrame('3', frame_right[0].frame_pan, frame_right[0].frame_tilt)) == False:
+        cam.release()
+        cv2.destroyAllWindows()
+        return False
     print(frame_right[2])
 
     #FRAME_CHANGED_FLAG - if frame has been changed , stop tracking the object for number of loops, keep from latency bugsglobal FRAME_CHANGED_FLAG
     FRAME_CHANGED_FLAG = 1    
-    #If Suspect
-    global IS_SUSPECT_FLAG
-    IS_SUSPECT_FLAG = 0
 
     CONFIDENCE_THRESHOLD = 0.2
     NMS_THRESHOLD = 0.4
@@ -336,6 +439,8 @@ def main():
     backup = "/home/rami/Desktop/Project/Pictures/backup"
     unknown_image_dir='/home/rami/Desktop/Project/Pictures/unknown'
     known_image_dir='/home/rami/Desktop/Project/Pictures/known'
+    #Clean unknown image dir
+    deleteAllFilesInFolder(unknown_image_dir)
 
     #Set person class
     class_names = setClassNames()
@@ -346,12 +451,17 @@ def main():
     net = setDNNParams()
     frame_idx = 0
     i = 0
+    
     PROCESSING_FLAG = 0
+    NO_PERSON_FLAG = 0
+    
     while True:
+        ret, frame2 = cam.read()
         ret, frame = cam.read()
+        # frame = cv2.resize(frame,(640 , 480))
         frame_right[frame_idx].showFrame(frame)
         if PROCESSING_FLAG==2 or PROCESSING_FLAG == 3:
-            frame, frame_idx, FRAME_CHANGED_FLAG, boundingBox = personDetector(frame, frame_idx, FRAME_CHANGED_FLAG, class_names, net, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, COLORS)
+            frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox = personDetector(frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, class_names, net, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, COLORS)
             cv2.imshow("nanoCam", frame)
             PROCESSING_FLAG = PROCESSING_FLAG + 1
             try:
@@ -360,13 +470,14 @@ def main():
                 continue
             if isInRoi(boundingBox, frame_right, frame_idx):
                 if  numberOfPicturesInFolder < 30 and i < 30:
-                    cv2.imwrite(unknown_image_dir+'/'+str(i)+'_unknown.png',frame)
+                    cv2.imwrite(unknown_image_dir+'/'+str(i)+'_unknown.png',frame2)
                     i = i + 1
                 if i == 30:
                     classify_thread = threading.Thread(target = classifyAndBackup, args=(known_image_dir, unknown_image_dir, backup, frame_right, SuspectThreshhold, frame_idx))
                     classify_thread.start()
                     i = 0
-        
+
+            #if no suspect come back to the beginning
             try:
                 f = open("./cfg/frame_idx.txt", "r")
                 frame_idx_text = f.read()
@@ -376,7 +487,7 @@ def main():
                     f = open("./cfg/frame_idx.txt", "w")
                     f.write("NULL")
             except:
-                print("nothing")
+                nothing(1)
 
         if PROCESSING_FLAG==4:
             PROCESSING_FLAG = 0
