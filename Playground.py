@@ -35,7 +35,6 @@ y2 = 0
 #define servo channels
 kit=ServoKit(channels=16)
 
-
 #draw ROI - Region Of Interest
 def mouse_click(event,x,y,flags,params):
     global x1,y1,x2,y2
@@ -173,33 +172,40 @@ def personDetector(frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, class_n
         cv2.putText(frame, label, (boundingBox[0], boundingBox[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         #Dealing with latency between servo and frame 
         if FRAME_CHANGED_FLAG>0:
+            print("Frame changed flag: " , FRAME_CHANGED_FLAG)
             FRAME_CHANGED_FLAG = FRAME_CHANGED_FLAG+1
             if FRAME_CHANGED_FLAG > 10:
                 FRAME_CHANGED_FLAG = 0
             return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
-
         #Checking what direction subject goes
         frame_idx, FRAME_CHANGED_FLAG = checkDirection(startX,endX,frame_idx,FRAME_CHANGED_FLAG)
         return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
     #IF NO PERSON IN THE PIC FOR MORE THAN 10 FRAMES BACK TO BEGINNING
     NO_PERSON_FLAG = NO_PERSON_FLAG + 1
     if NO_PERSON_FLAG > 0:
-        if NO_PERSON_FLAG > 10:
+        if NO_PERSON_FLAG > 50:
             frame_idx = 0
             NO_PERSON_FLAG = 0    
     return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
 
 
 def checkDirection(startX, endX, frame_idx, FRAME_CHANGED_FLAG):
+    numberOfFrames = 2 #idx start from 0 
     if frame_idx < 0:
         frame_idx = 0
         return frame_idx, FRAME_CHANGED_FLAG
     if endX>DISPLAY_WIDTH-10:
+        if frame_idx == numberOfFrames:
+            return frame_idx, FRAME_CHANGED_FLAG        
         frame_idx = frame_idx + 1
+        print("Frame idx end" , frame_idx, "EndX ", endX) 
         FRAME_CHANGED_FLAG = 1
     if startX<10:
+        if frame_idx == 0:
+            return frame_idx, FRAME_CHANGED_FLAG        
         frame_idx = frame_idx - 1
         FRAME_CHANGED_FLAG = 1
+        print("Begin" , frame_idx , "StartX : " , startX)
     return frame_idx, FRAME_CHANGED_FLAG
 
 def isInRoi(boundingBox, frame_right, frame_idx):
@@ -253,7 +259,7 @@ def classifyAndBackup(known_image_dir, unknown_image_dir, backup, frame_right, S
     newBackupPath = '/home/rami/Desktop/Project/Pictures/backup/'+str(datetime.datetime.now())+''
     os.rename('/home/rami/Desktop/Project/Pictures/backup/unknown' , newBackupPath)
     os.mkdir(unknown_image_dir)
-    pathToExamplePic = newBackupPath+'/5_unknown.png'
+    pathToExamplePic = newBackupPath+'/0_unknown.png'
     if score > SuspectThreshhold:
         frame_idx = 0
         shutil.rmtree(newBackupPath)
@@ -399,6 +405,21 @@ def setClassNames():
         class_names = [cname.strip() for cname in f.readlines()]
     return class_names
 
+def checkThreadResults(frame_idx, lock_thread):
+    f = open("./cfg/frame_idx.txt", "r")
+    frame_idx_text = f.read()
+    frame_idx_text = int(frame_idx_text)
+    if frame_idx_text == 0:
+        frame_idx = 0
+        f = open("./cfg/frame_idx.txt", "w")
+        f.write("NULL")
+        lock_thread = 0
+    if frame_idx_text > 0 and frame_idx_text < 10:
+        f = open("./cfg/frame_idx.txt", "w")
+        f.write("NULL")
+        lock_thread = 0      
+    return frame_idx, lock_thread
+
 #main func
 def main():
     create_panTilt_trackbars()
@@ -454,7 +475,8 @@ def main():
     
     PROCESSING_FLAG = 0
     NO_PERSON_FLAG = 0
-    
+    timer = 0
+    lock_thread = 0
     while True:
         ret, frame2 = cam.read()
         ret, frame = cam.read()
@@ -469,23 +491,29 @@ def main():
             except:
                 continue
             if isInRoi(boundingBox, frame_right, frame_idx):
-                if  numberOfPicturesInFolder < 30 and i < 30:
+                if  numberOfPicturesInFolder < 30 and i <30:
                     cv2.imwrite(unknown_image_dir+'/'+str(i)+'_unknown.png',frame2)
                     i = i + 1
-                if i == 30:
+                if i == 30 and lock_thread == 0:
                     classify_thread = threading.Thread(target = classifyAndBackup, args=(known_image_dir, unknown_image_dir, backup, frame_right, SuspectThreshhold, frame_idx))
                     classify_thread.start()
+                    lock_thread = 1
                     i = 0
-
-            #if no suspect come back to the beginning
+            if timer > 100 and lock_thread == 0:
+                classify_thread = threading.Thread(target = classifyAndBackup, args=(known_image_dir, unknown_image_dir, backup, frame_right, SuspectThreshhold, frame_idx))
+                classify_thread.start()
+                lock_thread = 1
+                timer = 0
+            if numberOfPicturesInFolder > 0:
+                timer = timer + 1
+                print("timer: "  ,timer)
+            if numberOfPicturesInFolder == 0:
+                timer = 0
+            print("lock_thread: ",lock_thread)
+            
+            #if no suspect return to frame 1
             try:
-                f = open("./cfg/frame_idx.txt", "r")
-                frame_idx_text = f.read()
-                frame_idx_text = int(frame_idx_text)
-                if frame_idx_text == 0:
-                    frame_idx = 0
-                    f = open("./cfg/frame_idx.txt", "w")
-                    f.write("NULL")
+                frame_idx, lock_thread = checkThreadResults(frame_idx, lock_thread)
             except:
                 nothing(1)
 
