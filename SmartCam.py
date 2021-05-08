@@ -17,8 +17,8 @@ from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 
 #display width and height
-WIDTH = 640
-HEIGHT = 480
+WIDTH = 2592
+HEIGHT = 1944
 DISPLAY_WIDTH = 640
 DISPLAY_HEIGHT = 480
 FOV = 40 # Servo FOV to change frame
@@ -47,13 +47,13 @@ def parser():
     parser.add_argument("--cfg", default="./cfg/Tinyyolov4_personDetection.cfg",
                         help="yolo cfg path, defult: ./cfg/Tinyyolov4_personDetection.cfg")       
 
-    parser.add_argument("--backup_dir", default="/home/rami/Desktop/Project/Pictures/backup",
+    parser.add_argument("--backup_dir", default="/home/rami/Desktop/SmartCam/Pictures/backup",
                         help="backup image directory")       
 
-    parser.add_argument("--unknown_dir", default="/home/rami/Desktop/Project/Pictures/unknown",
+    parser.add_argument("--unknown_dir", default="/home/rami/Desktop/SmartCam/Pictures/unknown",
                         help="unknown image directory")       
 
-    parser.add_argument("--known_dir", default="/home/rami/Desktop/Project/Pictures/known",
+    parser.add_argument("--known_dir", default="/home/rami/Desktop/SmartCam/Pictures/known",
                         help="known image directory")       
 
     parser.add_argument("--model", default="hog",
@@ -80,11 +80,11 @@ def check_arguments_errors(args):
     if not os.path.exists(args.weights):
         raise(ValueError("Invalid weight path {}".format(os.path.abspath(args.weights))))
     if not os.path.exists(args.backup_dir):
-        raise(ValueError("Invalid weight path {}".format(os.path.abspath(args.backup_dir))))
+        raise(ValueError("Invalid backup image path {}".format(os.path.abspath(args.backup_dir))))
     if not os.path.exists(args.unknown_dir):
-        raise(ValueError("Invalid weight path {}".format(os.path.abspath(args.unknown_dir))))
+        raise(ValueError("Invalid unknown image path {}".format(os.path.abspath(args.unknown_dir))))
     if not os.path.exists(args.known_dir):
-        raise(ValueError("Invalid weight path {}".format(os.path.abspath(args.known_dir))))
+        raise(ValueError("Invalid known image path {}".format(os.path.abspath(args.known_dir))))
 
 #draw ROI - Region Of Interest
 def mouse_click(event,x,y,flags,params):
@@ -244,7 +244,7 @@ def personDetector(frame, frame_idx, numberOfFrames, FRAME_CHANGED_FLAG, NO_PERS
 
 
 def checkDirection(startX, endX, frame_idx, FRAME_CHANGED_FLAG, numberOfFrames):
-    if endX>DISPLAY_WIDTH-10:
+    if endX>WIDTH-10:
         if frame_idx == numberOfFrames-1:
             return frame_idx, FRAME_CHANGED_FLAG
         frame_idx = frame_idx + 1
@@ -307,8 +307,8 @@ def classifyAndBackup(known_image_dir, unknown_image_dir, backup, frame_right, S
     score = isSuspect(known_image_dir, unknown_image_dir, model)
     print(score)
     shutil.move(unknown_image_dir, backup)
-    newBackupPath = '/home/rami/Desktop/Project/Pictures/backup/'+str(datetime.datetime.now())+''
-    os.rename('/home/rami/Desktop/Project/Pictures/backup/unknown' , newBackupPath)
+    newBackupPath = '/home/rami/Desktop/SmartCam/Pictures/backup/'+str(datetime.datetime.now())+''
+    os.rename('/home/rami/Desktop/SmartCam/Pictures/backup/unknown' , newBackupPath)
     os.mkdir(unknown_image_dir)
     pathToExamplePic = newBackupPath+'/0_unknown.png'
     if score > SuspectThreshhold:
@@ -555,11 +555,11 @@ def main():
                 continue
             #If bounding box inside the ROI then start take pictures
             if isInRoi(boundingBox, frame_right, frame_idx):
-                if  numberOfPicturesInFolder < 30 and i <30:
+                if  numberOfPicturesInFolder < 10 and i <10:
                     cv2.imwrite(args.unknown_dir+'/'+str(i)+'_unknown.png',frame2)
                     i = i + 1
                 #If there are 30 pics in the folder start classify thread 
-                if i == 30 and lock_thread == 0:
+                if i == 10 and lock_thread == 0:
                     classify_thread = threading.Thread(target = classifyAndBackup, args=(args.known_dir, args.unknown_dir, args.backup_dir, frame_right, SuspectThreshhold, frame_idx, args.model))
                     classify_thread.start()
                     lock_thread = 1
