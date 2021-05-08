@@ -1,23 +1,30 @@
 import cv2
-print(cv2.__version__)
+import imutils
+import time
 import numpy as np
 from adafruit_servokit import ServoKit
 
-#frame1 containes [pan,tilt,roi[x,y,w,h]] 
-global frame1 
-frame1 = np.zeros(2)
-print(frame1)
 
 
 #display width and height
-dispW=640
-dispH=480
-
+DISPLAY_WIDTH = 1920
+DISPLAY_HEIGHT = 1080
+FOV = 40 # Servo FOV to change frame
 #camera settings
-camSet='nvarguscamerasrc !  video/x-raw(memory:NVMM), width=3264, height=2464, format=NV12, framerate=21/1 ! nvvidconv  ! video/x-raw, width='+str(dispW)+', height='+str(dispH)+', format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink'
+camSet='nvarguscamerasrc !  video/x-raw(memory:NVMM), width=3264, height=2464, format=NV12, framerate=21/1 ! nvvidconv  ! video/x-raw, width='+str(DISPLAY_WIDTH)+', height='+str(DISPLAY_HEIGHT)+', format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink'
 cam= cv2.VideoCapture(camSet)
 
-#draw ROI - Region Of Interest 
+#Parameters to mouse click event
+goFlag = 0
+x1 = 0
+x2 = 0
+y1 = 0
+y2 = 0
+
+#define servo channels
+kit=ServoKit(channels=16)
+
+#draw ROI - Region Of Interest
 def mouse_click(event,x,y,flags,params):
     global x1,y1,x2,y2
     global goFlag
@@ -27,151 +34,202 @@ def mouse_click(event,x,y,flags,params):
         goFlag = 0
     if event == cv2.EVENT_LBUTTONUP:
         x2 = x
+        y2 = y
         goFlag = 1
-
-
-#define servo channels
-kit=ServoKit(channels=16) 
-pan=90
-tilt=90
-kit.servo[0].angle=pan
-kit.servo[1].angle=tilt
- 
 
 def nothing(x):
     pass
 
-def create_hsv_trackbars(): 
+#Create Pan Tilt trackbars for first initialization
+def create_panTilt_trackbars():
     cv2.namedWindow('Trackbars')
     cv2.moveWindow('Trackbars',1320,0)
-    
-    cv2.createTrackbar('hueLower', 'Trackbars',46,179,nothing)
-    cv2.createTrackbar('hueUpper', 'Trackbars',86,179,nothing)
-    
-    cv2.createTrackbar('hue2Lower', 'Trackbars',50,179,nothing)
-    cv2.createTrackbar('hue2Upper', 'Trackbars',0,179,nothing)
-    
-    cv2.createTrackbar('satLow', 'Trackbars',157,255,nothing)
-    cv2.createTrackbar('satHigh', 'Trackbars',255,255,nothing)
-    cv2.createTrackbar('valLow','Trackbars',100,255,nothing)
-    cv2.createTrackbar('valHigh','Trackbars',255,255,nothing)
-
-def create_panTilt_trackbars():
     cv2.createTrackbar('Pan', 'Trackbars',90,180,nothing)
     cv2.createTrackbar('Tilt', 'Trackbars',90,180,nothing)
 
+#Class camera for change position
+class imxCamera:
+    def __init__(self, pan , tilt):
+        self.pan = pan
+        self.tilt = tilt
 
 
-
-#create the taskbars
-create_hsv_trackbars()
-create_panTilt_trackbars()
-
-width=cam.get(cv2.CAP_PROP_FRAME_WIDTH)
-height=cam.get(cv2.CAP_PROP_FRAME_HEIGHT)
-print('width:',width,'height:',height)
+    def changePosition(pan ,tilt):
+        if pan > 180 or tilt > 180 or pan<0 or tilt<0:
+            print("pan or tilt cannot be more than 180")
+            return 1
+        kit.servo[0].angle = pan
+        kit.servo[1].angle = tilt
 
 
+#Class camera for each frame of the session
+class FrameView:
+    def __init__(self):
+        self.frame_pan = 90
+        self.frame_tilt = 90
+        self.roi = np.zeros(4)
 
-print(frame1)
-while True:   
-    ret, frame = cam.read()
-    #frame=cv2.imread('smarties.png')
- 
-    hsv=cv2.cvtColor(frame,cv2.COLOR_BGR2HSV)
-    hueLow=cv2.getTrackbarPos('hueLower', 'Trackbars')
-    hueUp=cv2.getTrackbarPos('hueUpper', 'Trackbars')
+    def __str__(self):
+        return'Roi: {self.roi} pan {self.frame_pan} tilt: {self.frame_tilt}'.format(self = self)
 
-    hue2Low=cv2.getTrackbarPos('hue2Lower', 'Trackbars')
-    hue2Up=cv2.getTrackbarPos('hue2Upper', 'Trackbars')
+#Set the roi from the user
+    def setRoi(self):
+        ret, frame = cam.read()
+        cv2.imshow('nanoCam',frame)
+        cv2.moveWindow('nanoCam',0,0)
+        cv2.setMouseCallback('nanoCam', mouse_click)
+        if goFlag == 1:
+            frame=cv2.rectangle(frame,(x1,y1),(x2,y2),(255,0,0),3)
+            region_of_interest = cv2.rectangle(frame,(x1,y1),(x2,y2),(255,0,0), 3)
+            cv2.imshow('nanoCam', region_of_interest)
 
-    Ls=cv2.getTrackbarPos('satLow', 'Trackbars')
-    Us=cv2.getTrackbarPos('satHigh', 'Trackbars')
-
-    Lv=cv2.getTrackbarPos('valLow', 'Trackbars')
-    Uv=cv2.getTrackbarPos('valHigh', 'Trackbars')
-    l_b=np.array([hueLow,Ls,Lv])
-    u_b=np.array([hueUp,Us,Uv])
- 
-    l_b2=np.array([hue2Low,Ls,Lv])
-    u_b2=np.array([hue2Up,Us,Uv])
- 
-    FGmask=cv2.inRange(hsv,l_b,u_b)
-    FGmask2=cv2.inRange(hsv,l_b2,u_b2)
-    FGmaskComp=cv2.add(FGmask,FGmask2)
-
-
-#Create black white mask for hsv     
-    cv2.imshow('FGmaskComp',FGmaskComp)
-    cv2.moveWindow('FGmaskComp',0,530)
-
-    cv2.getTrackbarPos('Pan','Trackbars')
-    cv2.getTrackbarPos('Tilt', 'Trackbars')
-
-#initilize frame 1 
-    if cv2.waitKey(1)==ord('1'):
-        frame1[0]=cv2.getTrackbarPos('Pan','Trackbars')
-        frame1[1]=cv2.getTrackbarPos('Tilt', 'Trackbars') 
-        pan = frame1[0]
-        tilt = frame1[1] 
-        kit.servo[0].angle=pan
-        kit.servo[1].angle=tilt 
-        print(frame1)
+#get the roi to the frame roi
+    def getRoi(self):
+        self.roi[0] = x1
+        self.roi[1] = x2
+        self.roi[2] = y1
+        self.roi[3] = y2
 
 
-    contours,_=cv2.findContours(FGmaskComp,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-    contours=sorted(contours,key=lambda x:cv2.contourArea(x),reverse=True)
-    for cnt in contours:
-        area=cv2.contourArea(cnt)
-        (x,y,w,h)=cv2.boundingRect(cnt)
-        if area>=50:
+#show the roi
+    def showRoi(self,frame):
+        frame=cv2.rectangle(frame,(int(self.roi[0]),int(self.roi[2])),(int(self.roi[1]),int(self.roi[3])),(255,0,0),3)
+        region_of_interest = cv2.rectangle(frame,(int(self.roi[0]),int(self.roi[2])),(int(self.roi[1]),int(self.roi[3])),(255,0,0), 3)
+        cv2.imshow('nanoCam', region_of_interest)
 
-            cv2.rectangle(frame,(x,y),(x+w,y+h),(255,0,0),3)
-            objX=x+w    # X position of the right bb of the object we tracking
-            objY=y+h    # Y position of the top of the object we tracking
-            
-            #error between the center of the frame to the object
-            errorPan_right = objX-width/2
-            errorPan_left = x - width/2   
-            errorTilt=objY-height/2 
-            
-            
-            if abs(errorPan_right)>width/2-5:
-                pan=pan-errorPan_right*2/32
-                print("errorpan right : ", errorPan_right)
-                print("pan : " ,pan)
-            if abs(errorPan_left)>width/2-5:
-                pan=pan-errorPan_left*2/32
-                print("errorpan left : ", errorPan_left)
-                print("pan : " ,pan)
+#init the first frame
+    def initFrame1(self):
+        while True:
+            self.frame_pan = cv2.getTrackbarPos('Pan','Trackbars')
+            self.frame_tilt = cv2.getTrackbarPos('Tilt', 'Trackbars')
+            imxCamera.changePosition(self.frame_pan, self.frame_tilt)
+            FrameView.setRoi(self)
+            if cv2.waitKey(1)==ord('1'):
+                FrameView.getRoi(self)
+                break
+            if cv2.waitKey(1)==ord('q'):
+                break
 
-            if abs(errorTilt)>height/2-10:
-                tilt=tilt-errorTilt/75
- 
- 
-            if pan>180:
-                pan=180
-                print("Pan Out of  Range")   
-            if pan<0:
-                pan=0
-                print("Pan Out of  Range") 
-            if tilt>180:
-                tilt=180
-                print("Tilt Out of  Range") 
-            if tilt<0:
-                tilt=0
-                print("Tilt Out of  Range")                 
- 
+#init any other frame with frame_fame_idx
+    def initRightFrame(self, frame_fame_idx, pan, tilt):
+        self.frame_tilt = tilt
+        self.frame_pan = pan
+        self.frame_pan = self.frame_pan - FOV*(int(frame_fame_idx)-1)
+        imxCamera.changePosition(self.frame_pan, self.frame_tilt)
+        while True:
+            FrameView.setRoi(self)
+            if cv2.waitKey(1)==ord(frame_fame_idx):
+                FrameView.getRoi(self)
+                break
+            if cv2.waitKey(1)==ord('q'):
+               break
 
-            kit.servo[0].angle=pan
-            kit.servo[1].angle=tilt 
-            break        
- 
 
-    cv2.imshow('nanoCam',frame)
-    cv2.moveWindow('nanoCam',0,0)
+#show the frame includes the roi
+    def showFrame(self, frame):
+        imxCamera.changePosition(self.frame_pan, self.frame_tilt)
+        FrameView.showRoi(self, frame)
+        #is_suspect()
+
+
+#face detection Deep Nueral Network for first tracking object
+def faceDetector(frame_right):
     
-    if cv2.waitKey(1)==ord('q'):
-        break
-cam.release()
-cv2.destroyAllWindows()
+    #FRAME_CHANGED_FLAG - if frame has been changed , stop tracking the object for number of loops, keep from latency bugsglobal FRAME_CHANGED_FLAG
+    FRAME_CHANGED_FLAG = 0
+    
+    PROCESSING_FLAG = 0 #to reduce latency we processing 2 of every 4 frames
+    fame_idx = 0
+    #Loading DNN Network to object detection
+    prototext = "deploy.prototxt"
+    model = "person_detection_0022.caffemodel"
+    net = cv2.dnn.readNetFromCaffe(prototext, model)
+    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+    while True:
+        PROCESSING_FLAG = PROCESSING_FLAG + 1
+        ret, frame = cam.read()
+        #change shape for dnn
+        (h, w) = frame.shape[:2]
+        #Showing the frame by the frame indx
+        frame_right[fame_idx].showFrame(frame)
+        if PROCESSING_FLAG==2 or PROCESSING_FLAG==3:
+            
+            blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300,300)), 1.0, (300,300), (104.0, 177.0, 123.0))
+            net.setInput(blob)
+            detections = net.forward()
+            for i in range(0, detections.shape[2]):
+                #if the detection accuracy lower the 30% continue
+                confidence = detections[0, 0, i, 2]
+                if confidence < 0.3:
+                    continue
+                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+                (startX, startY, endX, endY) = box.astype("int")
+                text = "{:.2f}%".format(confidence * 100)
+                y = startY - 10 if startY - 10 > 10 else startY + 10
+                cv2.rectangle(frame, (startX, startY), (endX, endY),
+                    (0, 0, 255), 2)
+                
+                #Draw Accuracy Percentages
+                cv2.putText(frame, text, (startX, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 2)
+               
+                #Tracking after the subject with the camera
+                if FRAME_CHANGED_FLAG>0:
+                    FRAME_CHANGED_FLAG = FRAME_CHANGED_FLAG+1
+                    if FRAME_CHANGED_FLAG > 10:
+                        FRAME_CHANGED_FLAG = 0
+                    continue
+                
+                if endX>DISPLAY_WIDTH-2:
+                    fame_idx = fame_idx + 1
+                    FRAME_CHANGED_FLAG = 1
+                    print(fame_idx)
+                    continue
+                if fame_idx == 0:
+                    continue
+                if startX<2:
+                    fame_idx = fame_idx - 1
+                    FRAME_CHANGED_FLAG = 1
+                    continue
+
+            cv2.imshow("nanoCam", frame)
+            if cv2.waitKey(1) == ord("q"):
+                break
+        if PROCESSING_FLAG==4:
+            PROCESSING_FLAG = 0
+        else:
+            cv2.imshow("nanoCam", frame)
+            # if the `q` key was pressed, break from the loop
+            if cv2.waitKey(1) == ord("q"):
+                break
+    cam.release()
+    cv2.destroyAllWindows()
+
+        
+
+
+#main func
+def main():
+    create_panTilt_trackbars()
+    
+    #transverse array of frames 
+    frame_right = []
+    
+    frame_right.append(FrameView())
+    frame_right[0].initFrame1()
+    print(frame_right[0])
+
+    frame_right.append(FrameView())
+    frame_right[1].initRightFrame('2', frame_right[0].frame_pan, frame_right[0].frame_tilt)
+    print(frame_right[1])
+    
+    frame_right.append(FrameView())
+    frame_right[2].initRightFrame('3', frame_right[0].frame_pan, frame_right[0].frame_tilt)
+    print(frame_right[2])
+
+    #detct Faces
+    faceDetector(frame_right)
+    return
+
+main()

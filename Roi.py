@@ -38,7 +38,7 @@ while True:
         roi = cv2.rectangle(frame,(x1,y1),(x2,y2),(255,0,0), 3)        
         cv2.imshow('nanoCam', roi)
         cv2.moveWindow('nanoCam', 0 ,0)
-        goFlag = 0
+    
     if cv2.waitKey(1)==ord('q'):
         break
 cam.release()
