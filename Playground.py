@@ -11,19 +11,22 @@ import datetime
 import threading
 import concurrent.futures
 import smtplib
+import argparse
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 
 #display width and height
 WIDTH = 640
-EIGHT = 480
+HEIGHT = 480
 DISPLAY_WIDTH = 640
 DISPLAY_HEIGHT = 480
 FOV = 40 # Servo FOV to change frame
 #camera settings
-camSet='nvarguscamerasrc !  video/x-raw(memory:NVMM), width=4032, height=3040, format=NV12, framerate=21/1 ! nvvidconv  ! video/x-raw, width='+str(WIDTH)+', height='+str(EIGHT)+', format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink'
+camSet='nvarguscamerasrc !  video/x-raw(memory:NVMM), width=4032, height=3040, format=NV12, framerate=21/1 ! nvvidconv  ! video/x-raw, width='+str(WIDTH)+', height='+str(HEIGHT)+', format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink'
 cam= cv2.VideoCapture(camSet)
+
+#If workinng mod = 1 , dont show video after initialize, else show video
 
 #Parameters to mouse click event
 goFlag = 0
@@ -34,6 +37,54 @@ y2 = 0
 
 #define servo channels
 kit=ServoKit(channels=16)
+
+def parser():
+    parser = argparse.ArgumentParser(description="Smart Camera detection and classification")
+
+    parser.add_argument("--weights", default="./cfg/Tinyyolov4_personDetection.weights",
+                        help="yolo weights path")
+
+    parser.add_argument("--cfg", default="./cfg/Tinyyolov4_personDetection.cfg",
+                        help="yolo cfg path, defult: ./cfg/Tinyyolov4_personDetection.cfg")       
+
+    parser.add_argument("--backup_dir", default="/home/rami/Desktop/Project/Pictures/backup",
+                        help="backup image directory")       
+
+    parser.add_argument("--unknown_dir", default="/home/rami/Desktop/Project/Pictures/unknown",
+                        help="unknown image directory")       
+
+    parser.add_argument("--known_dir", default="/home/rami/Desktop/Project/Pictures/known",
+                        help="known image directory")       
+
+    parser.add_argument("--model", default="hog",
+                        help="model for the classifier , cnn or hog, defullt: hog")
+
+    parser.add_argument("--frames", type=int ,default=2,
+                        help="number of frames to init, defult: 2")                                            
+
+    parser.add_argument("--mode", type=int ,default=1,
+                        help="to show video processing insert 0 , defult: 1")     
+
+    parser.add_argument("--thresh", type=int, default=5,
+                        help="false classification with confidence below this value (percentage), defult : 5")
+    return parser.parse_args()
+
+
+
+def check_arguments_errors(args):
+    assert 0 < args.thresh < 100, "Threshold should be an int between zero and 100"
+    assert 0 < args.frames < 4, "Frames should be an int between 1 - 3 "
+    assert  args.mode == 0 or args.mode == 1, "mode should be zero or one "
+    if not os.path.exists(args.cfg):
+        raise(ValueError("Invalid config path {}".format(os.path.abspath(args.cfg))))
+    if not os.path.exists(args.weights):
+        raise(ValueError("Invalid weight path {}".format(os.path.abspath(args.weights))))
+    if not os.path.exists(args.backup_dir):
+        raise(ValueError("Invalid weight path {}".format(os.path.abspath(args.backup_dir))))
+    if not os.path.exists(args.unknown_dir):
+        raise(ValueError("Invalid weight path {}".format(os.path.abspath(args.unknown_dir))))
+    if not os.path.exists(args.known_dir):
+        raise(ValueError("Invalid weight path {}".format(os.path.abspath(args.known_dir))))
 
 #draw ROI - Region Of Interest
 def mouse_click(event,x,y,flags,params):
@@ -54,15 +105,18 @@ def nothing(x):
 #Create Pan Tilt trackbars for first initialization
 def create_panTilt_trackbars():
     cv2.namedWindow('Trackbars')
-    cv2.moveWindow('Trackbars',1320,0)
     cv2.createTrackbar('Pan', 'Trackbars',90,180,nothing)
     cv2.createTrackbar('Tilt', 'Trackbars',90,180,nothing)
+    cv2.moveWindow('Trackbars',1320,0)
+
 
 
 class Point:
     def __init__(self, x, y):
-        self.x = x
-        self.y = y
+        self.x = x * (WIDTH/DISPLAY_WIDTH)
+        self.y = y * (HEIGHT/DISPLAY_HEIGHT)
+
+
 
 #Class camera for change position
 class imxCamera:
@@ -92,7 +146,7 @@ class FrameView:
 #Set the roi from the user
     def setRoi(self):
         ret, frame = cam.read()
-        # frame = cv2.resize(frame,(640 , 480))
+        frame = cv2.resize(frame,(640 , 480))
         cv2.imshow('nanoCam',frame)
         cv2.moveWindow('nanoCam',0,0)
         cv2.setMouseCallback('nanoCam', mouse_click)
@@ -103,17 +157,17 @@ class FrameView:
 
 #get the roi to the frame roi
     def getRoi(self):
-        self.roi[0] = x1
-        self.roi[1] = x2
-        self.roi[2] = y1
-        self.roi[3] = y2
-
+        self.roi[0] = x1*WIDTH/DISPLAY_WIDTH
+        self.roi[1] = x2*WIDTH/DISPLAY_WIDTH
+        self.roi[2] = y1*HEIGHT/DISPLAY_HEIGHT
+        self.roi[3] = y2*HEIGHT/DISPLAY_HEIGHT
+    
 
 #show the roi
-    def showRoi(self,frame):
+    def showRoi(self,frame, mode):
         frame=cv2.rectangle(frame,(int(self.roi[0]),int(self.roi[2])),(int(self.roi[1]),int(self.roi[3])),(255,0,0),3)
         region_of_interest = cv2.rectangle(frame,(int(self.roi[0]),int(self.roi[2])),(int(self.roi[1]),int(self.roi[3])),(255,0,0), 3)
-        cv2.imshow('nanoCam', region_of_interest)
+        if mode == 0: cv2.imshow('nanoCam', region_of_interest)
 
 #init the first frame
     def initFrame1(self):
@@ -136,14 +190,14 @@ class FrameView:
     def initRightFrame(self, frame_frame_idx, pan, tilt):
         self.frame_tilt = tilt
         self.frame_pan = pan
-        self.frame_pan = self.frame_pan - FOV*(int(frame_frame_idx)-1)
+        self.frame_pan = self.frame_pan - FOV*(frame_frame_idx-1)
         if (imxCamera.changePosition(self.frame_pan, self.frame_tilt)) == 1:
                 print("Failed to initialize frame:")
                 print("Frame cannot be over 180 degrees or less than 0")
                 return False
         while True:
             FrameView.setRoi(self)
-            if cv2.waitKey(1)==ord(frame_frame_idx):
+            if cv2.waitKey(1)==ord(str(frame_frame_idx)):
                 FrameView.getRoi(self)
                 return True
             if cv2.waitKey(1)==ord('q'):
@@ -152,12 +206,12 @@ class FrameView:
 
 
 #show the frame includes the roi
-    def showFrame(self, frame):
+    def showFrame(self, frame, mode):
         imxCamera.changePosition(self.frame_pan, self.frame_tilt)
-        FrameView.showRoi(self, frame)
+        FrameView.showRoi(self, frame, mode)
 
 
-def personDetector(frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, class_names, net, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, COLORS):
+def personDetector(frame, frame_idx, numberOfFrames, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, class_names, net, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, COLORS):
     model = cv2.dnn_DetectionModel(net)
     model.setInputParams(size=(416, 416), scale=1/255, swapRB=True)
     classes, scores, boxes = model.detect(frame, CONFIDENCE_THRESHOLD, NMS_THRESHOLD)
@@ -178,7 +232,7 @@ def personDetector(frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, class_n
                 FRAME_CHANGED_FLAG = 0
             return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
         #Checking what direction subject goes
-        frame_idx, FRAME_CHANGED_FLAG = checkDirection(startX,endX,frame_idx,FRAME_CHANGED_FLAG)
+        frame_idx, FRAME_CHANGED_FLAG = checkDirection(startX,endX,frame_idx,FRAME_CHANGED_FLAG, numberOfFrames)
         return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
     #IF NO PERSON IN THE PIC FOR MORE THAN 10 FRAMES BACK TO BEGINNING
     NO_PERSON_FLAG = NO_PERSON_FLAG + 1
@@ -189,20 +243,16 @@ def personDetector(frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, class_n
     return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
 
 
-def checkDirection(startX, endX, frame_idx, FRAME_CHANGED_FLAG):
-    numberOfFrames = 2 #idx start from 0 
-    if frame_idx < 0:
-        frame_idx = 0
-        return frame_idx, FRAME_CHANGED_FLAG
+def checkDirection(startX, endX, frame_idx, FRAME_CHANGED_FLAG, numberOfFrames):
     if endX>DISPLAY_WIDTH-10:
-        if frame_idx == numberOfFrames:
-            return frame_idx, FRAME_CHANGED_FLAG        
+        if frame_idx == numberOfFrames-1:
+            return frame_idx, FRAME_CHANGED_FLAG
         frame_idx = frame_idx + 1
         print("Frame idx end" , frame_idx, "EndX ", endX) 
         FRAME_CHANGED_FLAG = 1
     if startX<10:
         if frame_idx == 0:
-            return frame_idx, FRAME_CHANGED_FLAG        
+            return frame_idx, FRAME_CHANGED_FLAG
         frame_idx = frame_idx - 1
         FRAME_CHANGED_FLAG = 1
         print("Begin" , frame_idx , "StartX : " , startX)
@@ -210,6 +260,7 @@ def checkDirection(startX, endX, frame_idx, FRAME_CHANGED_FLAG):
 
 def isInRoi(boundingBox, frame_right, frame_idx):
     (startX, startY, w, h) = boundingBox.astype("int")
+    print("Frame IDX: " ,frame_idx)
     RoiBoxLeftUp = Point(frame_right[frame_idx].roi[0],frame_right[frame_idx].roi[2])
     RoiBoxLeftDown = Point(frame_right[frame_idx].roi[0],frame_right[frame_idx].roi[3])
     RoiBoxRightUp = Point(frame_right[frame_idx].roi[1],frame_right[frame_idx].roi[2])
@@ -252,8 +303,8 @@ Encodings=[]
 Names=[]
 
 
-def classifyAndBackup(known_image_dir, unknown_image_dir, backup, frame_right, SuspectThreshhold, frame_idx):
-    score = isSuspect(known_image_dir, unknown_image_dir)
+def classifyAndBackup(known_image_dir, unknown_image_dir, backup, frame_right, SuspectThreshhold, frame_idx, model):
+    score = isSuspect(known_image_dir, unknown_image_dir, model)
     print(score)
     shutil.move(unknown_image_dir, backup)
     newBackupPath = '/home/rami/Desktop/Project/Pictures/backup/'+str(datetime.datetime.now())+''
@@ -269,9 +320,9 @@ def classifyAndBackup(known_image_dir, unknown_image_dir, backup, frame_right, S
     return score
     
 
-def isSuspect(known_image_dir, unknown_image_dir):
+def isSuspect(known_image_dir, unknown_image_dir, model):
     scan_known_images(known_image_dir)
-    return scan_unknow_images(unknown_image_dir)
+    return scan_unknow_images(unknown_image_dir, model)
 
 def scan_known_images(known_image_dir):
     for root, dirs, files in os.walk(known_image_dir):
@@ -289,7 +340,7 @@ def scan_known_images(known_image_dir):
     
 font=cv2.FONT_HERSHEY_SIMPLEX
  
-def scan_unknow_images(unknown_image_dir):
+def scan_unknow_images(unknown_image_dir, model_net):
     vec = []
     for root,dirs, files in os.walk(unknown_image_dir):
         for file in files:
@@ -297,7 +348,7 @@ def scan_unknow_images(unknown_image_dir):
             print(file)
             testImagePath=os.path.join(root,file)
             testImage=face_recognition.load_image_file(testImagePath)
-            facePositions=face_recognition.face_locations(testImage)
+            facePositions=face_recognition.face_locations(testImage, model=model_net)
             allEncodings=face_recognition.face_encodings(testImage,facePositions)
             testImage=cv2.cvtColor(testImage,cv2.COLOR_RGB2BGR)
     
@@ -310,8 +361,6 @@ def scan_unknow_images(unknown_image_dir):
                     print("True match")
                     vec.append(1)
             vec.append(0)
-        #cv2.imshow('Picture', testImage)
-        #cv2.moveWindow('Picture',0,0)
         print(vec)
         confidence = calculate_statistic(vec)
         print("Scan Unknown Images" , confidence)
@@ -420,34 +469,45 @@ def checkThreadResults(frame_idx, lock_thread):
         lock_thread = 0      
     return frame_idx, lock_thread
 
-#main func
-def main():
-    create_panTilt_trackbars()
-
-    #transverse array of frames 
-    frame_right = []
-    
-    #initialize frames
+def init_number_of_frames(frame_right, number_of_frames_to_init):
+    #init first frame
     frame_right.append(FrameView())
     if (frame_right[0].initFrame1()) == False:
         cam.release()
         cv2.destroyAllWindows()
-        return False
+        return frame_right, False
     print(frame_right[0])
+    if number_of_frames_to_init >1:
+        i = 1
+        while i < number_of_frames_to_init:
+            frame_right.append(FrameView())
+            if (frame_right[i].initRightFrame(i+1, frame_right[0].frame_pan, frame_right[0].frame_tilt)) == False:
+                cam.release()
+                cv2.destroyAllWindows()
+                return frame_right, False
+            print(frame_right[i])
+            i = i + 1
+        return frame_right, True
+        
+#main func
+def main():
+    args = parser()
+    check_arguments_errors(args)
+    #If show video , reduce resources use by changing classification model to hog model. less accuracy 
+    if args.mode == 0:
+        arg.model = "hog"
 
-    frame_right.append(FrameView())
-    if (frame_right[1].initRightFrame('2', frame_right[0].frame_pan, frame_right[0].frame_tilt)) == False:
-        cam.release()
-        cv2.destroyAllWindows()
+
+    create_panTilt_trackbars()
+
+    #transverse array of frames 
+    frame_right = []
+    number_of_frames_to_init = 2
+    #initialize frames
+    frame_right, status = init_number_of_frames(frame_right, args.frames)
+    if status == False:
         return False
-    print(frame_right[1])
-    
-    frame_right.append(FrameView())
-    if (frame_right[2].initRightFrame('3', frame_right[0].frame_pan, frame_right[0].frame_tilt)) == False:
-        cam.release()
-        cv2.destroyAllWindows()
-        return False
-    print(frame_right[2])
+    cv2.destroyAllWindows()
 
     #FRAME_CHANGED_FLAG - if frame has been changed , stop tracking the object for number of loops, keep from latency bugsglobal FRAME_CHANGED_FLAG
     FRAME_CHANGED_FLAG = 1    
@@ -456,16 +516,13 @@ def main():
     NMS_THRESHOLD = 0.4
     COLORS = [(0, 255, 255), (255, 255, 0), (0, 255, 0), (255, 0, 0)]
 
-    #Directories to save pictures to processing and suspects    
-    backup = "/home/rami/Desktop/Project/Pictures/backup"
-    unknown_image_dir='/home/rami/Desktop/Project/Pictures/unknown'
-    known_image_dir='/home/rami/Desktop/Project/Pictures/known'
     #Clean unknown image dir
-    deleteAllFilesInFolder(unknown_image_dir)
+    deleteAllFilesInFolder(args.unknown_dir)
 
     #Set person class
     class_names = setClassNames()
     
+    #Threshhold of how many pictures true of all pictures, in percentage
     SuspectThreshhold = 5
 
     #configuring yolo model
@@ -473,37 +530,47 @@ def main():
     frame_idx = 0
     i = 0
     
+    #Flag to know how many pictures to process
     PROCESSING_FLAG = 0
+    #If there is no person any more in the picture back to beginning
     NO_PERSON_FLAG = 0
+
+    #timer to starting classify tread 
     timer = 0
+
+    #lock thread flag
     lock_thread = 0
     while True:
         ret, frame2 = cam.read()
         ret, frame = cam.read()
-        # frame = cv2.resize(frame,(640 , 480))
-        frame_right[frame_idx].showFrame(frame)
+        #frame = cv2.resize(frame,(640 , 480))
+        frame_right[frame_idx].showFrame(frame, args.mode)
         if PROCESSING_FLAG==2 or PROCESSING_FLAG == 3:
-            frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox = personDetector(frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, class_names, net, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, COLORS)
-            cv2.imshow("nanoCam", frame)
+            frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox = personDetector(frame, frame_idx, number_of_frames_to_init, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, class_names, net, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, COLORS)
+            if args.mode == 0: cv2.imshow("nanoCam", frame)
             PROCESSING_FLAG = PROCESSING_FLAG + 1
             try:
-                numberOfPicturesInFolder = len([name for name in os.listdir(unknown_image_dir) if os.path.isfile(os.path.join(unknown_image_dir, name))])
+                numberOfPicturesInFolder = len([name for name in os.listdir(args.unknown_dir) if os.path.isfile(os.path.join(args.unknown_dir, name))])
             except:
                 continue
+            #If bounding box inside the ROI then start take pictures
             if isInRoi(boundingBox, frame_right, frame_idx):
                 if  numberOfPicturesInFolder < 30 and i <30:
-                    cv2.imwrite(unknown_image_dir+'/'+str(i)+'_unknown.png',frame2)
+                    cv2.imwrite(args.unknown_dir+'/'+str(i)+'_unknown.png',frame2)
                     i = i + 1
+                #If there are 30 pics in the folder start classify thread 
                 if i == 30 and lock_thread == 0:
-                    classify_thread = threading.Thread(target = classifyAndBackup, args=(known_image_dir, unknown_image_dir, backup, frame_right, SuspectThreshhold, frame_idx))
+                    classify_thread = threading.Thread(target = classifyAndBackup, args=(args.known_dir, args.unknown_dir, args.backup_dir, frame_right, SuspectThreshhold, frame_idx, args.model))
                     classify_thread.start()
                     lock_thread = 1
                     i = 0
+            #if timer over 100 frames and there is no processing thread on start classify thread
             if timer > 100 and lock_thread == 0:
-                classify_thread = threading.Thread(target = classifyAndBackup, args=(known_image_dir, unknown_image_dir, backup, frame_right, SuspectThreshhold, frame_idx))
+                classify_thread = threading.Thread(target = classifyAndBackup, args=(args.known_dir, args.unknown_dir, args.backup_dir, frame_right, SuspectThreshhold, frame_idx, args.model))
                 classify_thread.start()
                 lock_thread = 1
                 timer = 0
+            #Start timer if there are any pics left in the unknown folder
             if numberOfPicturesInFolder > 0:
                 timer = timer + 1
                 print("timer: "  ,timer)
@@ -520,7 +587,7 @@ def main():
         if PROCESSING_FLAG==4:
             PROCESSING_FLAG = 0
         else:
-            cv2.imshow("nanoCam", frame)
+            if args.mode == 0: cv2.imshow("nanoCam", frame)
             # if the `q` key was pressed, break from the loop
             PROCESSING_FLAG = PROCESSING_FLAG + 1
             if cv2.waitKey(1) == ord("q"):
@@ -531,4 +598,5 @@ def main():
     cv2.destroyAllWindows()
 
 
-main()
+if __name__ == '__main__':
+    main()
