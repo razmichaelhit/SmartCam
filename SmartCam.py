@@ -2,6 +2,7 @@ import cv2
 import imutils
 import shutil
 import time
+import glob
 import numpy as np
 import os, sys
 from PIL import Image
@@ -15,12 +16,13 @@ import argparse
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
+import MegaNZ
 
 #display width and height
-WIDTH = 2592
-HEIGHT = 1944
-DISPLAY_WIDTH = 640
-DISPLAY_HEIGHT = 480
+WIDTH = 1920
+HEIGHT = 1080
+DISPLAY_WIDTH = 1920
+DISPLAY_HEIGHT = 1080
 FOV = 40 # Servo FOV to change frame
 #camera settings
 camSet='nvarguscamerasrc !  video/x-raw(memory:NVMM), width=4032, height=3040, format=NV12, framerate=21/1 ! nvvidconv  ! video/x-raw, width='+str(WIDTH)+', height='+str(HEIGHT)+', format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink'
@@ -98,6 +100,9 @@ def mouse_click(event,x,y,flags,params):
         x2 = x
         y2 = y
         goFlag = 1
+    if event == cv2.EVENT_MOUSEWHEEL:
+        goFlag = 0
+        x1 = x2 = y1 = y2 = 0
 
 def nothing(x):
     pass
@@ -167,7 +172,9 @@ class FrameView:
     def showRoi(self,frame, mode):
         frame=cv2.rectangle(frame,(int(self.roi[0]),int(self.roi[2])),(int(self.roi[1]),int(self.roi[3])),(255,0,0),3)
         region_of_interest = cv2.rectangle(frame,(int(self.roi[0]),int(self.roi[2])),(int(self.roi[1]),int(self.roi[3])),(255,0,0), 3)
-        if mode == 0: cv2.imshow('nanoCam', region_of_interest)
+        if mode == 0:
+            frame = cv2.resize(frame,(640 , 480))
+            cv2.imshow('nanoCam', region_of_interest)
 
 #init the first frame
     def initFrame1(self):
@@ -228,7 +235,7 @@ def personDetector(frame, frame_idx, numberOfFrames, FRAME_CHANGED_FLAG, NO_PERS
         if FRAME_CHANGED_FLAG>0:
             print("Frame changed flag: " , FRAME_CHANGED_FLAG)
             FRAME_CHANGED_FLAG = FRAME_CHANGED_FLAG+1
-            if FRAME_CHANGED_FLAG > 10:
+            if FRAME_CHANGED_FLAG > 3:
                 FRAME_CHANGED_FLAG = 0
             return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
         #Checking what direction subject goes
@@ -244,14 +251,16 @@ def personDetector(frame, frame_idx, numberOfFrames, FRAME_CHANGED_FLAG, NO_PERS
 
 
 def checkDirection(startX, endX, frame_idx, FRAME_CHANGED_FLAG, numberOfFrames):
-    if endX>WIDTH-10:
-        if frame_idx == numberOfFrames-1:
+    if endX>WIDTH-50:
+        if frame_idx == numberOfFrames:
+            print("frame index cannot be more then number of frames")
             return frame_idx, FRAME_CHANGED_FLAG
         frame_idx = frame_idx + 1
         print("Frame idx end" , frame_idx, "EndX ", endX) 
         FRAME_CHANGED_FLAG = 1
-    if startX<10:
+    if startX<50:
         if frame_idx == 0:
+            print("frame index cannot be less then number of frames")
             return frame_idx, FRAME_CHANGED_FLAG
         frame_idx = frame_idx - 1
         FRAME_CHANGED_FLAG = 1
@@ -307,7 +316,8 @@ def classifyAndBackup(known_image_dir, unknown_image_dir, backup, frame_right, S
     score = isSuspect(known_image_dir, unknown_image_dir, model)
     print(score)
     shutil.move(unknown_image_dir, backup)
-    newBackupPath = '/home/rami/Desktop/SmartCam/Pictures/backup/'+str(datetime.datetime.now())+''
+    dateTime = str(datetime.datetime.now())
+    newBackupPath = '/home/rami/Desktop/SmartCam/Pictures/backup/'+dateTime+''
     os.rename('/home/rami/Desktop/SmartCam/Pictures/backup/unknown' , newBackupPath)
     os.mkdir(unknown_image_dir)
     pathToExamplePic = newBackupPath+'/0_unknown.png'
@@ -316,6 +326,8 @@ def classifyAndBackup(known_image_dir, unknown_image_dir, backup, frame_right, S
         shutil.rmtree(newBackupPath)
     else:
         SendMail(pathToExamplePic)
+        ResizeAllPicturesInFOlder(newBackupPath)
+        MegaNZ.CreateUploadDeleteOld(newBackupPath, dateTime, newBackupPath)
     WriteFrameToFile(frame_idx)
     return score
     
@@ -417,10 +429,7 @@ def WriteFrameToFile(frame_idx):
 
 
 def ResizeAllPicturesInFOlder(path):
-    lst_imgs = [i for i in glob.glob(path+"/*.png")]
-    # It creates a folder called ltl if does't exist
-    if not "Resized" in os.listdir():
-        os.mkdir("Resized")  
+    lst_imgs = [i for i in glob.glob(path+"/*.png")] 
     print(lst_imgs)
     for i in lst_imgs:
         img = Image.open(i)
@@ -512,7 +521,7 @@ def main():
     #FRAME_CHANGED_FLAG - if frame has been changed , stop tracking the object for number of loops, keep from latency bugsglobal FRAME_CHANGED_FLAG
     FRAME_CHANGED_FLAG = 1    
 
-    CONFIDENCE_THRESHOLD = 0.2
+    CONFIDENCE_THRESHOLD = 0.4
     NMS_THRESHOLD = 0.4
     COLORS = [(0, 255, 255), (255, 255, 0), (0, 255, 0), (255, 0, 0)]
 
@@ -523,7 +532,7 @@ def main():
     class_names = setClassNames()
     
     #Threshhold of how many pictures true of all pictures, in percentage
-    SuspectThreshhold = 5
+    SuspectThreshhold = 20
 
     #configuring yolo model
     net = setDNNParams()
@@ -547,7 +556,9 @@ def main():
         frame_right[frame_idx].showFrame(frame, args.mode)
         if PROCESSING_FLAG==2 or PROCESSING_FLAG == 3:
             frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox = personDetector(frame, frame_idx, number_of_frames_to_init, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, class_names, net, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, COLORS)
-            if args.mode == 0: cv2.imshow("nanoCam", frame)
+            if args.mode == 0: 
+                frame = cv2.resize(frame,(640 , 480))
+                cv2.imshow("nanoCam", frame)
             PROCESSING_FLAG = PROCESSING_FLAG + 1
             try:
                 numberOfPicturesInFolder = len([name for name in os.listdir(args.unknown_dir) if os.path.isfile(os.path.join(args.unknown_dir, name))])
@@ -555,11 +566,11 @@ def main():
                 continue
             #If bounding box inside the ROI then start take pictures
             if isInRoi(boundingBox, frame_right, frame_idx):
-                if  numberOfPicturesInFolder < 10 and i <10:
+                if  numberOfPicturesInFolder < 5 and i <5:
                     cv2.imwrite(args.unknown_dir+'/'+str(i)+'_unknown.png',frame2)
                     i = i + 1
                 #If there are 30 pics in the folder start classify thread 
-                if i == 10 and lock_thread == 0:
+                if i == 5 and lock_thread == 0:
                     classify_thread = threading.Thread(target = classifyAndBackup, args=(args.known_dir, args.unknown_dir, args.backup_dir, frame_right, SuspectThreshhold, frame_idx, args.model))
                     classify_thread.start()
                     lock_thread = 1
@@ -587,7 +598,9 @@ def main():
         if PROCESSING_FLAG==4:
             PROCESSING_FLAG = 0
         else:
-            if args.mode == 0: cv2.imshow("nanoCam", frame)
+            if args.mode == 0: 
+                frame = cv2.resize(frame,(640 , 480))
+                cv2.imshow("nanoCam", frame)
             # if the `q` key was pressed, break from the loop
             PROCESSING_FLAG = PROCESSING_FLAG + 1
             if cv2.waitKey(1) == ord("q"):
