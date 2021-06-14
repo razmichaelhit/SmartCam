@@ -21,8 +21,8 @@ import MegaNZ
 #display width and height
 WIDTH = 1920
 HEIGHT = 1080
-DISPLAY_WIDTH = 1920
-DISPLAY_HEIGHT = 1080
+DISPLAY_WIDTH = 640
+DISPLAY_HEIGHT = 480
 FOV = 40 # Servo FOV to change frame
 #camera settings
 camSet='nvarguscamerasrc !  video/x-raw(memory:NVMM), width=4032, height=3040, format=NV12, framerate=21/1 ! nvvidconv  ! video/x-raw, width='+str(WIDTH)+', height='+str(HEIGHT)+', format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink'
@@ -61,11 +61,11 @@ def parser():
     parser.add_argument("--model", default="hog",
                         help="model for the classifier , cnn or hog, defullt: hog")
 
-    parser.add_argument("--frames", type=int ,default=2,
+    parser.add_argument("--presets", type=int ,default=2,
                         help="number of frames to init, defult: 2")                                            
 
-    parser.add_argument("--mode", type=int ,default=1,
-                        help="to show video processing insert 0 , defult: 1")     
+    parser.add_argument("--mode", type=int ,default=0,
+                        help="to disable video display insert 1 (for ) , defult: 0")     
 
     parser.add_argument("--thresh", type=int, default=5,
                         help="false classification with confidence below this value (percentage), defult : 5")
@@ -75,7 +75,7 @@ def parser():
 
 def check_arguments_errors(args):
     assert 0 < args.thresh < 100, "Threshold should be an int between zero and 100"
-    assert 0 < args.frames < 4, "Frames should be an int between 1 - 3 "
+    assert 0 < args.presets < 4, "Frames should be an int between 1 - 3 "
     assert  args.mode == 0 or args.mode == 1, "mode should be zero or one "
     if not os.path.exists(args.cfg):
         raise(ValueError("Invalid config path {}".format(os.path.abspath(args.cfg))))
@@ -118,9 +118,11 @@ def create_panTilt_trackbars():
 
 class Point:
     def __init__(self, x, y):
-        self.x = x * (WIDTH/DISPLAY_WIDTH)
-        self.y = y * (HEIGHT/DISPLAY_HEIGHT)
-
+        self.x = x# * (WIDTH/DISPLAY_WIDTH)
+        self.y = y# * (HEIGHT/DISPLAY_HEIGHT)
+    
+    def __str__(self):
+        return'x: {self.x} y {self.y}'.format(self = self)
 
 
 #Class camera for change position
@@ -151,7 +153,7 @@ class FrameView:
 #Set the roi from the user
     def setRoi(self):
         ret, frame = cam.read()
-        frame = cv2.resize(frame,(640 , 480))
+        frame = cv2.resize(frame,(DISPLAY_WIDTH, DISPLAY_HEIGHT))
         cv2.imshow('nanoCam',frame)
         cv2.moveWindow('nanoCam',0,0)
         cv2.setMouseCallback('nanoCam', mouse_click)
@@ -173,7 +175,7 @@ class FrameView:
         frame=cv2.rectangle(frame,(int(self.roi[0]),int(self.roi[2])),(int(self.roi[1]),int(self.roi[3])),(255,0,0),3)
         region_of_interest = cv2.rectangle(frame,(int(self.roi[0]),int(self.roi[2])),(int(self.roi[1]),int(self.roi[3])),(255,0,0), 3)
         if mode == 0:
-            frame = cv2.resize(frame,(640 , 480))
+            frame = cv2.resize(frame,(DISPLAY_WIDTH , DISPLAY_HEIGHT))
             cv2.imshow('nanoCam', region_of_interest)
 
 #init the first frame
@@ -239,7 +241,7 @@ def personDetector(frame, frame_idx, numberOfFrames, FRAME_CHANGED_FLAG, NO_PERS
                 FRAME_CHANGED_FLAG = 0
             return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
         #Checking what direction subject goes
-        frame_idx, FRAME_CHANGED_FLAG = checkDirection(startX,endX,frame_idx,FRAME_CHANGED_FLAG, numberOfFrames)
+        frame_idx, FRAME_CHANGED_FLAG = checkDirection(startX,endX,frame_idx,FRAME_CHANGED_FLAG, numberOfFrames-1)
         return frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox
     #IF NO PERSON IN THE PIC FOR MORE THAN 10 FRAMES BACK TO BEGINNING
     NO_PERSON_FLAG = NO_PERSON_FLAG + 1
@@ -251,14 +253,14 @@ def personDetector(frame, frame_idx, numberOfFrames, FRAME_CHANGED_FLAG, NO_PERS
 
 
 def checkDirection(startX, endX, frame_idx, FRAME_CHANGED_FLAG, numberOfFrames):
-    if endX>WIDTH-50:
+    if endX>WIDTH-100:
         if frame_idx == numberOfFrames:
             print("frame index cannot be more then number of frames")
             return frame_idx, FRAME_CHANGED_FLAG
         frame_idx = frame_idx + 1
         print("Frame idx end" , frame_idx, "EndX ", endX) 
         FRAME_CHANGED_FLAG = 1
-    if startX<50:
+    if startX<100:
         if frame_idx == 0:
             print("frame index cannot be less then number of frames")
             return frame_idx, FRAME_CHANGED_FLAG
@@ -269,16 +271,34 @@ def checkDirection(startX, endX, frame_idx, FRAME_CHANGED_FLAG, numberOfFrames):
 
 def isInRoi(boundingBox, frame_right, frame_idx):
     (startX, startY, w, h) = boundingBox.astype("int")
+    print("ROI: ", frame_right[frame_idx].roi)
     print("Frame IDX: " ,frame_idx)
+    print("startX,startY,w,h: ",startX, startY, w, h)
     RoiBoxLeftUp = Point(frame_right[frame_idx].roi[0],frame_right[frame_idx].roi[2])
+    print("Roi Left Up: " , RoiBoxLeftUp)
     RoiBoxLeftDown = Point(frame_right[frame_idx].roi[0],frame_right[frame_idx].roi[3])
+    print("Roi Left Down: " , RoiBoxLeftDown)
     RoiBoxRightUp = Point(frame_right[frame_idx].roi[1],frame_right[frame_idx].roi[2])
+    print("Roi Right up: " , RoiBoxRightUp)
     RoiBoxRightDown = Point(frame_right[frame_idx].roi[1],frame_right[frame_idx].roi[3])
+    print("Roi Right down: " , RoiBoxRightDown)
     BoundingBoxLeftUp = Point(startX, startY)
+    print("BoundingBoxLeftUp ", BoundingBoxLeftUp)
     BoundingBoxLeftDown = Point(startX, startY + h)
+    print("BoundingBoxLeftDown ", BoundingBoxLeftDown)
     BoundingBoxRightUp = Point(startX + w, startY)
+    print("BoundingBoxRightUp ", BoundingBoxRightUp)
     BoundingBoxRightDown = Point(startX + w, startY + h)
-    
+    print("BoundingBoxRightDown ", BoundingBoxRightDown)
+
+
+
+
+
+
+
+
+
     if(doOverlap(BoundingBoxLeftUp, BoundingBoxLeftDown, BoundingBoxRightUp, BoundingBoxRightDown, 
     RoiBoxLeftUp, RoiBoxLeftDown, RoiBoxRightUp, RoiBoxRightDown)==True):
         return True
@@ -511,9 +531,9 @@ def main():
 
     #transverse array of frames 
     frame_right = []
-    number_of_frames_to_init = 2
+    number_of_frames_to_init = args.presets
     #initialize frames
-    frame_right, status = init_number_of_frames(frame_right, args.frames)
+    frame_right, status = init_number_of_frames(frame_right, args.presets)
     if status == False:
         return False
     cv2.destroyAllWindows()
@@ -552,12 +572,12 @@ def main():
     while True:
         ret, frame2 = cam.read()
         ret, frame = cam.read()
-        #frame = cv2.resize(frame,(640 , 480))
+        #frame = cv2.resize(frame,(DISPLAY_WIDTH , DISPLAY_HEIGHT))
         frame_right[frame_idx].showFrame(frame, args.mode)
-        if PROCESSING_FLAG==2 or PROCESSING_FLAG == 3:
+        if PROCESSING_FLAG ==1 or PROCESSING_FLAG == 3:
             frame, frame_idx, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, boundingBox = personDetector(frame, frame_idx, number_of_frames_to_init, FRAME_CHANGED_FLAG, NO_PERSON_FLAG, class_names, net, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, COLORS)
             if args.mode == 0: 
-                frame = cv2.resize(frame,(640 , 480))
+                frame = cv2.resize(frame,(DISPLAY_WIDTH , DISPLAY_HEIGHT))
                 cv2.imshow("nanoCam", frame)
             PROCESSING_FLAG = PROCESSING_FLAG + 1
             try:
@@ -599,7 +619,7 @@ def main():
             PROCESSING_FLAG = 0
         else:
             if args.mode == 0: 
-                frame = cv2.resize(frame,(640 , 480))
+                frame = cv2.resize(frame,(DISPLAY_WIDTH , DISPLAY_HEIGHT))
                 cv2.imshow("nanoCam", frame)
             # if the `q` key was pressed, break from the loop
             PROCESSING_FLAG = PROCESSING_FLAG + 1
